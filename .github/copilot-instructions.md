@@ -1,61 +1,47 @@
-# Project Guidelines
+# 專案指引
 
-## Architecture
+## 架構
 
-Single-file Windows Forms application (`Program.cs`, ~1000+ lines) targeting `net8.0-windows`.
+Windows Forms 桌面應用程式，目標框架為 `net8.0-windows`，不新增外部套件。
 
-- **`ShutdownConfig`** – POCO class serialized to/from `shutdown_config.json` (same directory as executable). Fields: `Hour`, `Minute`, `Second`, `ForceShutdown`, `EnableAutoShutdown`.
-- **`Program`** – Static entry point class. Responsibilities:
-  - `Main`: initialize console (`AllocConsole`), load config, build system tray icon, hide console, start timer.
-  - `InitializeSystemTrayIcon` / `UpdateTrayMenuItems`: manage `NotifyIcon` + `ContextMenuStrip`.
-  - `StartShutdownTimer` / timer callback: polls every second, calls `ExecuteShutdown` when time matches.
-  - `ExecuteShutdown` / `ExecuteDirectShutdown`: runs `shutdown` via `Process.Start`. Logs before/after.
-  - Config helpers: `LoadOrCreateConfig`, `SaveConfig`, `ModifyShutdownTime`.
-  - Log helpers: `InitializeLogFile`, `LogMessage` – writes to `shutdown_log.txt` beside executable.
-- Config/log paths are derived from `Assembly.GetExecutingAssembly().Location`, not `Directory.GetCurrentDirectory()`.
+- 設定檔 `shutdown_config.json` 與日誌位於執行檔同目錄。
+- 日誌檔名為 `shutdown_log_yyyy-MM-dd.txt`。
+- 排程執行一般 Windows 關機；Windows Update 等系統流程由 Windows 處理，不宣稱等待更新完成。
+- 通知區提供排程控制、修改時間、強制關機切換及立即關機操作；立即關機由通知區操作，不提供 CLI 立即關機介面。
 
-## Code Style
+## 程式慣例
 
-- Language: C# with `<LangVersion>latest</LangVersion>`, `<Nullable>enable</Nullable>`, `<ImplicitUsings>enable</ImplicitUsings>`.
-- Output type: `WinExe` with `<UseWindowsForms>true</UseWindowsForms>`.
-- Nullable-aware throughout: use `?` for nullable fields (`config?`, `trayIcon?`, `shutdownTimer?`) and null-check before accessing.
-- Shared mutable state (`config`) is guarded by `lock (configLock)`.
-- Windows API functions are declared via `[DllImport]` P/Invoke inside `Program`.
-- Comments may be written in Traditional Chinese (zh-TW); this is intentional.
+- 使用 nullable-aware C#、`<ImplicitUsings>enable</ImplicitUsings>`、`<LangVersion>latest</LangVersion>`。
+- 輸出類型為 `WinExe`，使用 `<UseWindowsForms>true</UseWindowsForms>`。
+- 檔案路徑以執行檔所在目錄為基準，不依賴目前工作目錄。
+- 修改設定時保持共用狀態同步，儲存設定並更新通知區選單。
+- 一般關機命令為 `shutdown /s /t 0`；強制關機為 `shutdown /s /f /t 0`。不可信輸入不得直接串入程序參數。
+- 關機失敗或使用者取消 UAC 時不得執行更強制 fallback，應恢復並等待下次排程。
+- 強制關機可能造成未儲存資料遺失。
 
-## Build and Test
+## 排程與提醒
 
-```bash
-# 建構
+- 關機前提醒 30 秒，可順延 5 分鐘。
+- 停用排程或修改時間時，取消舊提醒。
+- 睡眠跨過設定時間時，補處理當日已追蹤的排程；首次啟動或新設定時間已過時從明天開始，不補昨天的排程。
+
+## 建置與安全測試
+
+```powershell
 dotnet build
-
-# 執行
 dotnet run
-
-# 以最小化方式啟動
-Showdown.exe --minimized
-
-# 測試關機邏輯（不實際關機，延遲 5 秒後執行）
+dotnet run -- --minimized
+Showdown.exe --self-test
 Showdown.exe --test-shutdown
+Showdown.exe --test-shutdown --force
 ```
 
-Output: `bin/Debug/net8.0-windows/Showdown.exe`. The `shutdown_config.json` and `shutdown_log.txt` are placed beside the executable.
+`--self-test` 必須在 UI、設定載入及計時器初始化前安全執行並結束。`--test-shutdown` 僅模擬並輸出普通 `/s /t 0`；加 `--force` 輸出 `/s /f /t 0`，兩者都不得啟動外部程序。`--minimized` / `-m` 保留相容性。以上安全參數行為僅適用於此版本；舊版 `--test-shutdown` 可能真的關機，勿以舊版測試。
 
-## Project Conventions
+建置輸出通常位於 `bin/Debug/net8.0-windows/Showdown.exe`。執行時設定檔與 `shutdown_log_yyyy-MM-dd.txt` 位於執行檔旁。
 
-- Always resolve file paths relative to the executable directory using `ExecutablePath` (`Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)`), not the working directory.
-- When modifying `config`, acquire `configLock` and call `SaveConfig(config)` afterward; then call `UpdateTrayMenuItems()` to keep UI in sync.
-- Timer uses `System.Timers.Timer` (not `System.Windows.Forms.Timer`). Elapsed handler must be thread-safe.
-- Shutdown is triggered via `shutdown /s /t <seconds>` (normal) or `shutdown /s /f /t <seconds>` (force). The attempt count (`shutdownAttempts`) is incremented on each call.
-- After any config change from a menu item, always call `UpdateTrayMenuItems()` to refresh checked states.
+## 整合點
 
-## Integration Points
-
-- **`AutoStartShutdownTool.bat`**: placed in `shell:startup` to launch `Showdown.exe --minimized` at Windows login. Updates required if output path changes.
-- **`shutdown_config.json`**: JSON config file. Edited by the app or manually. Schema: `{"Hour":int,"Minute":int,"Second":int,"ForceShutdown":bool,"EnableAutoShutdown":bool}`.
-- **`shutdown_log.txt`**: append-only log beside the executable. Written on startup, shutdown attempts, and errors.
-
-## Security
-
-- The app calls the Windows `shutdown` command. Avoid allowing unvalidated input to flow into process arguments.
-- Admin privileges may be required for forced shutdown; the code checks `WindowsIdentity`/`WindowsPrincipal` for elevation where needed.
+- `AutoStartShutdownTool.bat` 可接受 exe 絕對路徑參數；否則搜尋腳本同目錄及 repo 的 Release/Debug 輸出。若放入啟動資料夾，應使用捷徑並提供正確 exe 路徑。
+- `shutdown_config.json` 欄位：`Hour`、`Minute`、`Second`、`ForceShutdown`、`EnableAutoShutdown`。
+- 不要實際執行關機作為驗證；測試參數只能模擬，不啟動系統關機程序。
