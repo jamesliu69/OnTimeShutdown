@@ -19,10 +19,10 @@
 
 ## 工作清單與驗證責任
 
-- [ ] 核心：設定值域驗證、追蹤到期目標、提醒後重驗狀態、尊重強制選項、檢查程序退出碼、取消提升即停止、失敗恢復排程、可見的設定輸出及安全測試入口。核心工作者先寫安全回歸檢查，再實作；主代理核對來源並執行測試。
+- [x] 核心：設定值域驗證、追蹤到期目標、提醒後重驗狀態、尊重強制選項、檢查程序退出碼、取消提升即停止、失敗恢復排程、可見的設定輸出及安全測試入口。核心工作者先寫安全回歸檢查，再實作；主代理核對來源並執行測試。
 - [x] UI：新增原生時間設定對話框，使用數值控制項及確定／取消按鈕，避免 Console.ReadLine。設計工作者負責獨立表單檔案與鍵盤／取消／縮放驗證；核心工作者負責接線。
 - [x] 建置與文件：修正 SDK 選擇、啟動腳本路徑、README 與專案指引中的日誌／版本／安全說明。建置工作者負責該區檔案；主代理負責實際 build、腳本與說明核對。
-- [ ] 整合審查：核對全部需求、建置與自我測試；不以實際執行關機驗收。
+- [x] 整合審查：核對全部需求、建置與自我測試；不以實際執行關機驗收。
 
 ## 檔案界面
 
@@ -70,3 +70,14 @@ UI 兩個新檔案已由主代理讀取核對契約、值域、Enter／Escape �
 Ruling: 對新動態驗證與限定重審暴露的 4 個阻擋項追加一次小範圍修復，而非在存在確定崩潰時宣稱完成；成本是額外回歸與來源核對時間，不增加功能或套件。
 
 Ruling: 移除自動 runas 提權重試，讓 gate 只包無互動的本機程序啟動；規格未要求自動提權，這比引入授權後再提交機制更小且安全。成本是權限不足時需由使用者自行以系統管理員身分重啟；程式會明確回報，不提升強制程度。
+
+## 最終驗收
+
+- 最後限定修復僅變更 Program.cs／ShutdownReliability.cs；主代理另補啟動失敗通知的權限提示文字。原獨立審查者已確認 N1–N4 全部 ADDRESSED，該 diff 無新 Critical／Important 阻擋項。
+- 主代理實跑 `dotnet build Showdown.sln --configuration Debug --warnaserror` 與 Release：兩者皆 0 警告、0 錯誤。
+- 兩組態均以實際 Showdown.exe、CreateNoWindow、重新導向 stdout／stderr 執行三種安全入口：--self-test、--test-shutdown、--test-shutdown --force。六次皆 exit=0，UTF-8 strict 解碼正確、stderr 為空；各組態正式設定／日誌沒有新增或變更。自我測試皆 38/38 cases，不宣稱為 38 個內部斷言。完整 CLI 證據保存在核准暫存目錄 OnTimeShutdown-final-cli-evidence.txt。
+- 主代理重跑獨立時間表單：10 個執行期斷言通過；N3 production ShowReminder 故障注入通過：activePrompt 清空、Form disposed、timer 停用、完成 callback 未呼叫。這些 harness 不呼叫 Program.Main 或真實關機。
+- 主代理另在相同安全 harness 驗證兩個 production flow／command adapter 案例：nonzero exit 及 1223 cancellation 均只呼叫假 executor 一次、同日 IsDue=false、次日 IsDue=true，補足重審指出的非阻擋測試缺口；沒有修改產品程式碼。
+- 前置失敗證據校準：N2 有 32 cases／3 failures 的 RED，N3 有清理失敗的 RED→GREEN，N4 以主代理實際 WinExe 崩潰作 RED；N1 只有來源根因確認及修後測試，沒有捏造前置 RED。初版工作者未完整採 TDD 的紀錄仍保留。
+- 真正 shutdown.exe、實際系統關機／UAC／Windows Update 整合及長時間 GUI 主循環未執行；安全驗證不等於這些 OS 整合已驗收。沒有新增外部套件或修改全域設定。
+- 執行期間偵測 HEAD 已由原基線變為 7ff3482de6b5e79399fe0f180549db4ac69bb8ea（commit 訊息：feat: 重構關機排程核心並加入安全測試機制）；主代理未執行 commit／push／reset，也未回退該提交。最終僅更新本文件的驗證紀錄，保留為未提交差異。
